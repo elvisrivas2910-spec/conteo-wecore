@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Conteo Físico · WECore</title>
+<style>
+  :root { --azul:#1d4ed8; --verde:#059669; --gris:#6b7280; --fondo:#f3f4f6; --borde:#e5e7eb; }
+  * { box-sizing:border-box; margin:0; font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+  body { background:var(--fondo); color:#111827; padding-bottom:90px; }
+  header { position:sticky; top:0; z-index:10; background:#fff; border-bottom:1px solid var(--borde); padding:10px 14px; }
+  .brand { font-weight:800; color:var(--azul); font-size:15px; }
+  .brand span { color:#111827; }
+  h1 { font-size:17px; margin-top:2px; }
+  .sub { color:var(--gris); font-size:12px; }
+  .progreso { height:7px; background:var(--borde); border-radius:99px; margin-top:8px; overflow:hidden; }
+  .progreso > div { height:100%; background:var(--verde); width:0%; transition:width .3s; }
+  .barra { display:flex; gap:8px; margin-top:8px; }
+  .barra input { flex:1; padding:9px 12px; border:1px solid var(--borde); border-radius:10px; font-size:15px; }
+  .chip { padding:9px 12px; border-radius:10px; border:1px solid var(--borde); background:#fff; font-size:13px; color:var(--gris); white-space:nowrap; }
+  .chip.activo { background:var(--azul); color:#fff; border-color:var(--azul); }
+  main { padding:10px 12px; }
+  .cat { font-size:11px; font-weight:700; color:var(--gris); text-transform:uppercase; letter-spacing:.5px; margin:14px 4px 6px; }
+  .item { background:#fff; border:1px solid var(--borde); border-radius:12px; padding:10px 12px; margin-bottom:8px;
+          display:flex; align-items:center; gap:10px; }
+  .item.contado { border-color:var(--verde); background:#ecfdf5; }
+  .info { flex:1; min-width:0; }
+  .nombre { font-size:13.5px; line-height:1.3; }
+  .sku { font-size:11px; color:var(--gris); margin-top:2px; }
+  .item input { width:74px; padding:10px 6px; text-align:center; font-size:18px; font-weight:700;
+                border:1.5px solid var(--borde); border-radius:10px; }
+  .item.contado input { border-color:var(--verde); color:var(--verde); }
+  footer { position:fixed; bottom:0; left:0; right:0; background:#fff; border-top:1px solid var(--borde);
+           padding:10px 14px; display:flex; align-items:center; gap:12px; }
+  .estado { flex:1; font-size:12px; color:var(--gris); }
+  button.enviar { background:var(--azul); color:#fff; border:0; border-radius:12px; padding:13px 22px;
+                  font-size:15px; font-weight:700; }
+  button.enviar:disabled { background:#9ca3af; }
+  .pantalla { padding:40px 24px; text-align:center; }
+  .pantalla .icono { font-size:52px; }
+  .pantalla h2 { margin:12px 0 6px; }
+  .pantalla p { color:var(--gris); font-size:14px; line-height:1.5; }
+  .kpis { display:flex; gap:10px; justify-content:center; margin:18px 0; }
+  .kpi { background:#fff; border:1px solid var(--borde); border-radius:12px; padding:12px 16px; min-width:86px; }
+  .kpi b { display:block; font-size:22px; }
+  .kpi span { font-size:11px; color:var(--gris); }
+  .aviso { background:#eff6ff; border:1px solid #bfdbfe; color:#1e40af; font-size:12.5px;
+           border-radius:10px; padding:8px 12px; margin-top:8px; }
+</style>
+</head>
+<body>
+<div id="app"><div class="pantalla"><div class="icono">⏳</div><h2>Cargando conteo…</h2></div></div>
+<script>
+const SB = 'https://ilfdokxkagfoeuaittdz.supabase.co';
+const KEY = 'sb_publishable_QqP_koZDFSKT_lIH-G9x3g_c8KOkamb';
+const token = new URLSearchParams(location.search).get('t');
+let S = { productos:[], conteos:{}, latencias:{}, cargadoEn:0, bodega:'', filtro:'', soloPend:false, guardando:null };
+
+async function rpc(fn, body) {
+  const r = await fetch(`${SB}/rest/v1/rpc/${fn}`, { method:'POST',
+    headers:{ apikey:KEY, Authorization:'Bearer '+KEY, 'Content-Type':'application/json' },
+    body: JSON.stringify(body) });
+  return r.json();
+}
+
+function pantalla(icono, titulo, texto) {
+  document.getElementById('app').innerHTML =
+    `<div class="pantalla"><div class="icono">${icono}</div><h2>${titulo}</h2><p>${texto||''}</p></div>`;
+}
+
+async function cargar() {
+  if (!token) return pantalla('🔒','Link inválido','Pide el link de tu bodega en el grupo.');
+  const d = await rpc('conteo_cargar', { p_token: token });
+  if (!d.ok) return pantalla('⚠️', d.error || 'Error', 'Consulta en el grupo de traslados.');
+  S.productos = d.productos; S.bodega = d.bodega; S.cargadoEn = d.cargado_en;
+  if (d.borrador && d.borrador.conteos) S.conteos = d.borrador.conteos;
+  render(d);
+}
+
+function contados() { return Object.values(S.conteos).filter(v => v !== '' && v !== null).length; }
+
+function render(d) {
+  const app = document.getElementById('app');
+  app.innerHTML = `
+    <header>
+      <div class="brand">WE<span>Core</span> · Conteo Físico</div>
+      <h1>${S.bodega}</h1>
+      <div class="sub">Día ${d.dia} · ${S.productos.length} productos · Responsable: ${d.responsable||'—'}</div>
+      <div class="progreso"><div id="prog"></div></div>
+      <div class="barra">
+        <input id="buscar" placeholder="Buscar producto o código…" autocomplete="off">
+        <div class="chip" id="chipPend">Faltan <b id="nPend"></b></div>
+      </div>
+      <div class="aviso">🕶️ Conteo ciego: cuenta lo físico sin mirar el sistema. Lo que no cuentes queda como NO CONTADO (no pongas 0 si no lo contaste).</div>
+    </header>
+    <main id="lista"></main>
+    <footer>
+      <div class="estado" id="estado">Guardado automático activo</div>
+      <button class="enviar" id="btnEnviar">Enviar conteo</button>
+    </footer>`;
+  document.getElementById('buscar').oninput = e => { S.filtro = e.target.value.toLowerCase(); lista(); };
+  document.getElementById('chipPend').onclick = () => {
+    S.soloPend = !S.soloPend;
+    document.getElementById('chipPend').classList.toggle('activo', S.soloPend); lista();
+  };
+  document.getElementById('btnEnviar').onclick = enviar;
+  lista();
+}
+
+function lista() {
+  const cont = document.getElementById('lista');
+  let html = '', cat = null;
+  for (const p of S.productos) {
+    const v = S.conteos[p.sku] ?? '';
+    const visible = (!S.filtro || (p.nombre||'').toLowerCase().includes(S.filtro) ||
+                     (p.sku||'').toLowerCase().includes(S.filtro) || (p.barcode||'').includes(S.filtro))
+                 && (!S.soloPend || v === '');
+    if (!visible) continue;
+    if ((p.categoria||'Sin categoría') !== cat) { cat = p.categoria || 'Sin categoría'; html += `<div class="cat">${cat}</div>`; }
+    html += `<div class="item ${v!=='' ? 'contado':''}" id="it-${cssId(p.sku)}">
+      <div class="info"><div class="nombre">${p.nombre||p.sku}</div><div class="sku">${p.sku}</div></div>
+      <input inputmode="numeric" pattern="[0-9]*" value="${v}" placeholder="—"
+             oninput="setConteo('${p.sku.replace(/'/g,"\\'")}', this.value)">
+    </div>`;
+  }
+  cont.innerHTML = html || '<div class="pantalla"><p>Sin resultados para ese filtro.</p></div>';
+  refrescar();
+}
+
+function cssId(s){ return s.replace(/[^a-zA-Z0-9]/g,'_'); }
+
+window.setConteo = (sku, val) => {
+  val = val.replace(/\D/g,'');
+  if (val === '') delete S.conteos[sku]; else S.conteos[sku] = val;
+  if (val !== '' && !S.latencias[sku]) S.latencias[sku] = Math.round((Date.now() - S.cargadoEn)/1000);
+  const el = document.getElementById('it-' + cssId(sku));
+  if (el) el.classList.toggle('contado', val !== '');
+  refrescar(); autosave();
+};
+
+function refrescar() {
+  const n = contados(), t = S.productos.length;
+  document.getElementById('prog').style.width = (t ? (n/t*100) : 0) + '%';
+  document.getElementById('nPend').textContent = t - n;
+}
+
+function autosave() {
+  clearTimeout(S.guardando);
+  document.getElementById('estado').textContent = 'Escribiendo…';
+  S.guardando = setTimeout(async () => {
+    const r = await rpc('conteo_borrador', { p_token: token, p_borrador: { conteos: S.conteos } });
+    document.getElementById('estado').textContent = r.ok
+      ? '✔ Guardado ' + new Date().toLocaleTimeString('es-CO',{hour:'2-digit',minute:'2-digit'})
+      : '⚠ Sin conexión — se reintenta solo';
+    if (!r.ok) autosave();
+  }, 2500);
+}
+
+async function enviar() {
+  const n = contados(), t = S.productos.length;
+  if (n === 0) return alert('No has contado ningún producto.');
+  const faltan = t - n;
+  if (!confirm(`Vas a enviar ${n} productos contados` +
+      (faltan ? `.\n⚠️ ${faltan} quedarán como NO CONTADOS.` : ' (todos).') + '\n\n¿Enviar?')) return;
+  const btn = document.getElementById('btnEnviar');
+  btn.disabled = true; btn.textContent = 'Enviando…';
+  const items = Object.entries(S.conteos).map(([sku, conteo]) => {
+    const p = S.productos.find(x => x.sku === sku) || {};
+    return { sku, nombre: p.nombre, conteo, latencia: S.latencias[sku] || null };
+  });
+  const r = await rpc('conteo_enviar', { p_token: token, p: { items, cargado_en: S.cargadoEn } });
+  if (!r.ok) { btn.disabled = false; btn.textContent = 'Enviar conteo'; return alert('Error: ' + (r.error||'reintenta')); }
+  document.getElementById('app').innerHTML = `
+    <div class="pantalla">
+      <div class="icono">✅</div><h2>¡Conteo enviado!</h2>
+      <div class="kpis">
+        <div class="kpi"><b>${r.total}</b><span>contados</span></div>
+        <div class="kpi"><b style="color:var(--verde)">${r.coinciden}</b><span>coinciden</span></div>
+        <div class="kpi"><b style="color:#dc2626">${r.novedades}</b><span>novedades</span></div>
+      </div>
+      <p>El bot publicará el detalle de las novedades en el grupo de traslados. ¡Gracias, ${S.bodega}! 🙌</p>
+    </div>`;
+}
+
+cargar();
+</script>
+</body>
+</html>
