@@ -54,7 +54,7 @@
 const SB = 'https://ilfdokxkagfoeuaittdz.supabase.co';
 const KEY = 'sb_publishable_QqP_koZDFSKT_lIH-G9x3g_c8KOkamb';
 const token = new URLSearchParams(location.search).get('t');
-let S = { productos:[], conteos:{}, latencias:{}, cargadoEn:0, bodega:'', filtro:'', soloPend:false, guardando:null };
+let S = { productos:[], conteos:{}, latencias:{}, cargadoEn:0, bodega:'', filtro:'', soloPend:false, guardando:null, contadoPor:'', modo:'COMPLETO' };
 
 async function rpc(fn, body) {
   const r = await fetch(`${SB}/rest/v1/rpc/${fn}`, { method:'POST',
@@ -72,8 +72,9 @@ async function cargar() {
   if (!token) return pantalla('🔒','Link inválido','Pide el link de tu bodega en el grupo.');
   const d = await rpc('conteo_cargar', { p_token: token });
   if (!d.ok) return pantalla('⚠️', d.error || 'Error', 'Consulta en el grupo de traslados.');
-  S.productos = d.productos; S.bodega = d.bodega; S.cargadoEn = d.cargado_en;
+  S.productos = d.productos; S.bodega = d.bodega; S.cargadoEn = d.cargado_en; S.modo = d.modo || 'COMPLETO';
   if (d.borrador && d.borrador.conteos) S.conteos = d.borrador.conteos;
+  if (d.borrador && d.borrador.contadoPor) S.contadoPor = d.borrador.contadoPor;
   render(d);
 }
 
@@ -85,19 +86,25 @@ function render(d) {
     <header>
       <div class="brand">WE<span>Core</span> · Conteo Físico</div>
       <h1>${S.bodega}</h1>
-      <div class="sub">Día ${d.dia} · ${S.productos.length} productos · Responsable: ${d.responsable||'—'}</div>
+      <div class="sub">${S.modo==='VERIFICACION' ? 'RECUENTO DE VERIFICACIÓN' : 'Día '+d.dia} · ${S.productos.length} productos</div>
       <div class="progreso"><div id="prog"></div></div>
+      <div class="barra">
+        <input id="quien" placeholder="⚠️ ¿Quién está contando? (obligatorio)" autocomplete="off" value="${S.contadoPor||''}">
+      </div>
       <div class="barra">
         <input id="buscar" placeholder="Buscar producto o código…" autocomplete="off">
         <div class="chip" id="chipPend">Faltan <b id="nPend"></b></div>
       </div>
-      <div class="aviso">🕶️ Conteo ciego: cuenta lo físico sin mirar el sistema. Lo que no cuentes queda como NO CONTADO (no pongas 0 si no lo contaste).</div>
+      <div class="aviso">${S.modo==='VERIFICACION'
+        ? '🔁 Recuento de verificación: SOLO los productos en duda. Cuenten despacio, en pareja si es posible, y en voz alta.'
+        : '🕶️ Conteo ciego: cuenta lo físico sin mirar el sistema. Lo que no cuentes queda como NO CONTADO (no pongas 0 si no lo contaste).'}</div>
     </header>
     <main id="lista"></main>
     <footer>
       <div class="estado" id="estado">Guardado automático activo</div>
       <button class="enviar" id="btnEnviar">Enviar conteo</button>
     </footer>`;
+  document.getElementById('quien').oninput = e => { S.contadoPor = e.target.value; autosave(); };
   document.getElementById('buscar').oninput = e => { S.filtro = e.target.value.toLowerCase(); lista(); };
   document.getElementById('chipPend').onclick = () => {
     S.soloPend = !S.soloPend;
@@ -148,7 +155,7 @@ function autosave() {
   clearTimeout(S.guardando);
   document.getElementById('estado').textContent = 'Escribiendo…';
   S.guardando = setTimeout(async () => {
-    const r = await rpc('conteo_borrador', { p_token: token, p_borrador: { conteos: S.conteos } });
+    const r = await rpc('conteo_borrador', { p_token: token, p_borrador: { conteos: S.conteos, contadoPor: S.contadoPor } });
     document.getElementById('estado').textContent = r.ok
       ? '✔ Guardado ' + new Date().toLocaleTimeString('es-CO',{hour:'2-digit',minute:'2-digit'})
       : '⚠ Sin conexión — se reintenta solo';
@@ -158,9 +165,10 @@ function autosave() {
 
 async function enviar() {
   const n = contados(), t = S.productos.length;
+  if (!S.contadoPor.trim()) { document.getElementById('quien').focus(); return alert('Escribe quién está contando (arriba).'); }
   if (n === 0) return alert('No has contado ningún producto.');
   const faltan = t - n;
-  if (!confirm(`Vas a enviar ${n} productos contados` +
+  if (!confirm(`Cuenta: ${S.contadoPor.trim()}\nVas a enviar ${n} productos` +
       (faltan ? `.\n⚠️ ${faltan} quedarán como NO CONTADOS.` : ' (todos).') + '\n\n¿Enviar?')) return;
   const btn = document.getElementById('btnEnviar');
   btn.disabled = true; btn.textContent = 'Enviando…';
@@ -168,9 +176,20 @@ async function enviar() {
     const p = S.productos.find(x => x.sku === sku) || {};
     return { sku, nombre: p.nombre, conteo, latencia: S.latencias[sku] || null };
   });
-  const r = await rpc('conteo_enviar', { p_token: token, p: { items, cargado_en: S.cargadoEn } });
+  const r = await rpc('conteo_enviar', { p_token: token,
+    p: { items, cargado_en: S.cargadoEn, contado_por: S.contadoPor.trim() } });
   if (!r.ok) { btn.disabled = false; btn.textContent = 'Enviar conteo'; return alert('Error: ' + (r.error||'reintenta')); }
-  document.getElementById('app').innerHTML = `
+  const esVerif = r.modo === 'VERIFICACION';
+  document.getElementById('app').innerHTML = esVerif ? `
+    <div class="pantalla">
+      <div class="icono">🔁</div><h2>¡Recuento enviado!</h2>
+      <div class="kpis">
+        <div class="kpi"><b>${r.total}</b><span>verificados</span></div>
+        <div class="kpi"><b style="color:var(--verde)">${r.falsas}</b><span>eran error de conteo</span></div>
+        <div class="kpi"><b style="color:#dc2626">${r.confirmadas}</b><span>novedades reales</span></div>
+      </div>
+      <p>Las novedades falsas quedaron cerradas. Las reales pasan a resolución. ¡Gracias! 🙌</p>
+    </div>` : `
     <div class="pantalla">
       <div class="icono">✅</div><h2>¡Conteo enviado!</h2>
       <div class="kpis">
