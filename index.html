@@ -73,9 +73,11 @@ async function cargar() {
   const d = await rpc('conteo_cargar', { p_token: token });
   if (!d.ok) return pantalla('⚠️', d.error || 'Error', 'Consulta en el grupo de traslados.');
   S.productos = d.productos; S.bodega = d.bodega; S.cargadoEn = d.cargado_en; S.modo = d.modo || 'COMPLETO';
+  S.habilitadaEn = d.habilitada_en || 0; S.bloqueado = !!d.bloqueado;
   if (d.borrador && d.borrador.conteos) S.conteos = d.borrador.conteos;
   if (d.borrador && d.borrador.contadoPor) S.contadoPor = d.borrador.contadoPor;
   render(d);
+  if (S.bloqueado) vigilarApertura();
 }
 
 function contados() { return Object.values(S.conteos).filter(v => v !== '' && v !== null).length; }
@@ -98,6 +100,7 @@ function render(d) {
       <div class="aviso">${S.modo==='VERIFICACION'
         ? '🔁 Recuento de verificación: SOLO los productos en duda. Cuenten despacio, en pareja si es posible, y en voz alta.'
         : '🕶️ Conteo ciego: cuenta lo físico sin mirar el sistema. Lo que no cuentes queda como NO CONTADO (no pongas 0 si no lo contaste).'}</div>
+      ${S.bloqueado ? '<div class="aviso" id="candado" style="background:#fef3c7;border-color:#fcd34d;color:#92400e">⏳ El conteo se habilita a las 10:00 — falta <b id="cuenta"></b>. Puedes ir ubicándote en tu primer estante.</div>' : ''}
     </header>
     <main id="lista"></main>
     <footer>
@@ -126,7 +129,7 @@ function lista() {
     if ((p.categoria||'Sin categoría') !== cat) { cat = p.categoria || 'Sin categoría'; html += `<div class="cat">${cat}</div>`; }
     html += `<div class="item ${v!=='' ? 'contado':''}" id="it-${cssId(p.sku)}">
       <div class="info"><div class="nombre">${p.nombre||p.sku}</div><div class="sku">${p.sku}</div></div>
-      <input inputmode="numeric" pattern="[0-9]*" value="${v}" placeholder="—"
+      <input inputmode="numeric" pattern="[0-9]*" value="${v}" placeholder="${S.bloqueado?'🔒':'—'}" ${S.bloqueado?'disabled':''}
              oninput="setConteo('${p.sku.replace(/'/g,"\\'")}', this.value)">
     </div>`;
   }
@@ -163,8 +166,23 @@ function autosave() {
   }, 2500);
 }
 
+function vigilarApertura() {
+  const iv = setInterval(() => {
+    const falta = S.habilitadaEn - Date.now();
+    const el = document.getElementById('cuenta');
+    if (falta <= 0) {
+      clearInterval(iv); S.bloqueado = false;
+      const c = document.getElementById('candado'); if (c) c.remove();
+      document.querySelectorAll('.item input').forEach(i => { i.disabled = false; i.placeholder = '—'; });
+      return;
+    }
+    if (el) el.textContent = Math.floor(falta/60000) + ':' + String(Math.floor((falta%60000)/1000)).padStart(2,'0');
+  }, 1000);
+}
+
 async function enviar() {
   const n = contados(), t = S.productos.length;
+  if (S.bloqueado) return alert('El conteo se habilita a las 10:00.');
   if (!S.contadoPor.trim()) { document.getElementById('quien').focus(); return alert('Escribe quién está contando (arriba).'); }
   if (n === 0) return alert('No has contado ningún producto.');
   const faltan = t - n;
