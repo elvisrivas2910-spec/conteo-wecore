@@ -16,7 +16,7 @@
   .progreso { height:7px; background:var(--borde); border-radius:99px; margin-top:8px; overflow:hidden; }
   .progreso > div { height:100%; background:var(--verde); width:0%; transition:width .3s; }
   .barra { display:flex; gap:8px; margin-top:8px; }
-  .barra input { flex:1; padding:9px 12px; border:1px solid var(--borde); border-radius:10px; font-size:15px; }
+  .barra input, .barra select { flex:1; padding:9px 12px; border:1px solid var(--borde); border-radius:10px; font-size:15px; background:#fff; }
   .chip { padding:9px 12px; border-radius:10px; border:1px solid var(--borde); background:#fff; font-size:13px; color:var(--gris); white-space:nowrap; }
   .chip.activo { background:var(--azul); color:#fff; border-color:var(--azul); }
   main { padding:10px 12px; }
@@ -73,7 +73,7 @@ async function cargar() {
   const d = await rpc('conteo_cargar', { p_token: token });
   if (!d.ok) return pantalla('⚠️', d.error || 'Error', 'Consulta en el grupo de traslados.');
   S.productos = d.productos; S.bodega = d.bodega; S.cargadoEn = d.cargado_en; S.modo = d.modo || 'COMPLETO';
-  S.habilitadaEn = d.habilitada_en || 0; S.bloqueado = !!d.bloqueado;
+  S.habilitadaEn = d.habilitada_en || 0; S.bloqueado = !!d.bloqueado; S.vendedores = d.vendedores || [];
   if (d.borrador && d.borrador.conteos) S.conteos = d.borrador.conteos;
   if (d.borrador && d.borrador.contadoPor) S.contadoPor = d.borrador.contadoPor;
   render(d);
@@ -91,7 +91,10 @@ function render(d) {
       <div class="sub">${S.modo==='VERIFICACION' ? 'RECUENTO DE VERIFICACIÓN' : 'Día '+d.dia} · ${S.productos.length} productos</div>
       <div class="progreso"><div id="prog"></div></div>
       <div class="barra">
-        <input id="quien" placeholder="⚠️ ¿Quién está contando? (obligatorio)" autocomplete="off" value="${S.contadoPor||''}">
+        <select id="quien">
+          <option value="">⚠️ ¿Quién está contando? (obligatorio)</option>
+          ${S.vendedores.map(v => `<option value="${v}" ${v===S.contadoPor?'selected':''}>${v}</option>`).join('')}
+        </select>
       </div>
       <div class="barra">
         <input id="buscar" placeholder="Buscar producto o código…" autocomplete="off">
@@ -107,7 +110,7 @@ function render(d) {
       <div class="estado" id="estado">Guardado automático activo</div>
       <button class="enviar" id="btnEnviar">Enviar conteo</button>
     </footer>`;
-  document.getElementById('quien').oninput = e => { S.contadoPor = e.target.value; autosave(); };
+  document.getElementById('quien').onchange = e => { S.contadoPor = e.target.value; autosave(); };
   document.getElementById('buscar').oninput = e => { S.filtro = e.target.value.toLowerCase(); lista(); };
   document.getElementById('chipPend').onclick = () => {
     S.soloPend = !S.soloPend;
