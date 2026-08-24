@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
 <title>Conteo Físico · WECore</title>
 <style>
-  :root { --azul:#1d4ed8; --verde:#059669; --gris:#6b7280; --fondo:#f3f4f6; --borde:#e5e7eb; }
+  :root { --azul:#1d4ed8; --verde:#059669; --gris:#6b7280; --fondo:#f3f4f6; --borde:#e5e7eb; --ambar:#b45309; }
   * { box-sizing:border-box; margin:0; font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
   body { background:var(--fondo); color:#111827; padding-bottom:90px; }
   header { position:sticky; top:0; z-index:10; background:#fff; border-bottom:1px solid var(--borde); padding:10px 14px; }
@@ -24,9 +24,12 @@
   .item { background:#fff; border:1px solid var(--borde); border-radius:12px; padding:10px 12px; margin-bottom:8px;
           display:flex; align-items:center; gap:10px; }
   .item.contado { border-color:var(--verde); background:#ecfdf5; }
+  .item.deOtro { border-style:dashed; }
   .info { flex:1; min-width:0; }
   .nombre { font-size:13.5px; line-height:1.3; }
   .sku { font-size:11px; color:var(--gris); margin-top:2px; }
+  .paq { font-size:11px; color:var(--ambar); margin-top:2px; font-weight:600; }
+  .otro { font-size:10.5px; color:var(--verde); margin-top:2px; }
   .item input { width:74px; padding:10px 6px; text-align:center; font-size:18px; font-weight:700;
                 border:1.5px solid var(--borde); border-radius:10px; }
   .item.contado input { border-color:var(--verde); color:var(--verde); }
@@ -40,12 +43,21 @@
   .pantalla .icono { font-size:52px; }
   .pantalla h2 { margin:12px 0 6px; }
   .pantalla p { color:var(--gris); font-size:14px; line-height:1.5; }
-  .kpis { display:flex; gap:10px; justify-content:center; margin:18px 0; }
+  .kpis { display:flex; gap:10px; justify-content:center; margin:18px 0; flex-wrap:wrap; }
   .kpi { background:#fff; border:1px solid var(--borde); border-radius:12px; padding:12px 16px; min-width:86px; }
   .kpi b { display:block; font-size:22px; }
   .kpi span { font-size:11px; color:var(--gris); }
   .aviso { background:#eff6ff; border:1px solid #bfdbfe; color:#1e40af; font-size:12.5px;
            border-radius:10px; padding:8px 12px; margin-top:8px; }
+  .hallazgo { margin:16px 4px; }
+  .hallazgo > button { width:100%; background:#fff; border:1.5px dashed var(--borde); border-radius:12px;
+                       padding:12px; font-size:13.5px; color:var(--gris); }
+  .hallazgo .panel { background:#fff; border:1px solid var(--borde); border-radius:12px; padding:10px; margin-top:8px; }
+  .hallazgo .panel input { width:100%; padding:9px 12px; border:1px solid var(--borde); border-radius:10px; font-size:14px; }
+  .hallazgo .res { padding:9px 6px; border-bottom:1px solid var(--borde); font-size:13px; }
+  .hallazgo .res:last-child { border-bottom:0; }
+  .hallazgo .res b { display:block; font-size:12.5px; }
+  .hallazgo .res span { color:var(--gris); font-size:11px; }
 </style>
 </head>
 <body>
@@ -54,7 +66,8 @@
 const SB = 'https://ilfdokxkagfoeuaittdz.supabase.co';
 const KEY = 'sb_publishable_QqP_koZDFSKT_lIH-G9x3g_c8KOkamb';
 const token = new URLSearchParams(location.search).get('t');
-let S = { productos:[], conteos:{}, latencias:{}, cargadoEn:0, bodega:'', filtro:'', soloPend:false, guardando:null, contadoPor:'', modo:'COMPLETO' };
+let S = { productos:[], conteos:{}, latencias:{}, cargadoEn:0, bodega:'', filtro:'', soloPend:false,
+          guardando:null, contadoPor:'', modo:'COMPLETO', ultimoTecleo:0, mitadAvisada:false, enviado:false };
 
 async function rpc(fn, body) {
   const r = await fetch(`${SB}/rest/v1/rpc/${fn}`, { method:'POST',
@@ -68,6 +81,13 @@ function pantalla(icono, titulo, texto) {
     `<div class="pantalla"><div class="icono">${icono}</div><h2>${titulo}</h2><p>${texto||''}</p></div>`;
 }
 
+const MODO_TXT = {
+  COMPLETO:     { sub:d=>'Día '+d.dia, aviso:'🕶️ Conteo ciego: cuenta lo físico sin mirar el sistema. Lo que no cuentes queda como NO CONTADO (no pongas 0 si no lo contaste). Si son dos contando, repártanse los estantes: aquí se ve lo que ya contó tu compañero.' },
+  VERIFICACION: { sub:()=>'RECUENTO DE VERIFICACIÓN', aviso:'🔁 Recuento a ciegas: SOLO estas referencias. Antes de contar cada una, confirma que la referencia y el COLOR coinciden con la etiqueta — hay gemelas que solo cambian de color. La lista incluye referencias de control que sí cuadraron: es parte del método, no desconfianza.' },
+  DESEMPATE:    { sub:()=>'DESEMPATE · tu conteo decide', aviso:'🧷 En estas referencias dos personas contaron distinto. Cuenta con el producto en la mano, despacio, en todos los rincones. Tu número es el que decide.' },
+  AUDITORIA:    { sub:()=>'AUDITORÍA de lo corregido', aviso:'🔎 Estas referencias se corrigieron ayer en SIIGO. Cuenta lo físico: yo comparo contra el sistema en vivo y te digo si la corrección quedó bien.' },
+};
+
 async function cargar() {
   if (!token) return pantalla('🔒','Link inválido','Pide el link de tu bodega en el grupo.');
   const d = await rpc('conteo_cargar', { p_token: token });
@@ -78,17 +98,19 @@ async function cargar() {
   if (d.borrador && d.borrador.contadoPor) S.contadoPor = d.borrador.contadoPor;
   render(d);
   if (S.bloqueado) vigilarApertura();
+  setInterval(pullCompanero, 20000);
 }
 
 function contados() { return Object.values(S.conteos).filter(v => v !== '' && v !== null).length; }
 
 function render(d) {
+  const mt = MODO_TXT[S.modo] || MODO_TXT.COMPLETO;
   const app = document.getElementById('app');
   app.innerHTML = `
     <header>
       <div class="brand">WE<span>Core</span> · Conteo Físico</div>
       <h1>${S.bodega}</h1>
-      <div class="sub">${S.modo==='VERIFICACION' ? 'RECUENTO DE VERIFICACIÓN' : 'Día '+d.dia} · ${S.productos.length} productos</div>
+      <div class="sub">${mt.sub(d)} · ${S.productos.length} productos</div>
       <div class="progreso"><div id="prog"></div></div>
       <div class="barra">
         <select id="quien">
@@ -100,12 +122,18 @@ function render(d) {
         <input id="buscar" placeholder="Buscar producto o código…" autocomplete="off">
         <div class="chip" id="chipPend">Faltan <b id="nPend"></b></div>
       </div>
-      <div class="aviso">${S.modo==='VERIFICACION'
-        ? '🔁 Recuento de verificación: SOLO los productos en duda. Cuenten despacio, en pareja si es posible, y en voz alta.'
-        : '🕶️ Conteo ciego: cuenta lo físico sin mirar el sistema. Lo que no cuentes queda como NO CONTADO (no pongas 0 si no lo contaste).'}</div>
+      <div class="aviso">${mt.aviso}</div>
       ${S.bloqueado ? '<div class="aviso" id="candado" style="background:#fef3c7;border-color:#fcd34d;color:#92400e">⏳ El conteo se habilita a las 10:00 — falta <b id="cuenta"></b>. Puedes ir ubicándote en tu primer estante.</div>' : ''}
     </header>
     <main id="lista"></main>
+    ${S.modo === 'COMPLETO' ? `
+    <div class="hallazgo" id="hallazgo">
+      <button onclick="toggleHallazgo()">➕ ¿Encontraste algo que no está en la lista?</button>
+      <div class="panel" id="hallPanel" style="display:none">
+        <input id="hallBuscar" placeholder="Nombre o código del producto (mín. 3 letras)…" autocomplete="off">
+        <div id="hallRes"></div>
+      </div>
+    </div>` : ''}
     <footer>
       <div class="estado" id="estado">Guardado automático activo</div>
       <button class="enviar" id="btnEnviar">Enviar conteo</button>
@@ -117,7 +145,20 @@ function render(d) {
     document.getElementById('chipPend').classList.toggle('activo', S.soloPend); lista();
   };
   document.getElementById('btnEnviar').onclick = enviar;
+  const hb = document.getElementById('hallBuscar');
+  if (hb) hb.oninput = e => buscarHallazgo(e.target.value);
   lista();
+}
+
+function itemHTML(p, v) {
+  return `<div class="item ${v!=='' ? 'contado':''} ${S.deOtro && S.deOtro[p.sku] ? 'deOtro':''}" id="it-${cssId(p.sku)}">
+    <div class="info"><div class="nombre">${p.nombre||p.sku}</div><div class="sku">${p.sku}</div>
+      ${p.paquete ? '<div class="paq">📦 Se cuenta en paquetes de 5 + sueltos (ej: 3 paquetes y 2 sueltos = 17)</div>' : ''}
+      ${S.deOtro && S.deOtro[p.sku] ? '<div class="otro">✓ contado por tu compañero — si lo revisas tú también, escribe tu número</div>' : ''}
+    </div>
+    <input inputmode="numeric" pattern="[0-9]*" value="${v}" placeholder="${S.bloqueado?'🔒':'—'}" ${S.bloqueado?'disabled':''}
+           oninput="setConteo('${p.sku.replace(/'/g,"\\'")}', this.value)">
+  </div>`;
 }
 
 function lista() {
@@ -130,11 +171,7 @@ function lista() {
                  && (!S.soloPend || v === '');
     if (!visible) continue;
     if ((p.categoria||'Sin categoría') !== cat) { cat = p.categoria || 'Sin categoría'; html += `<div class="cat">${cat}</div>`; }
-    html += `<div class="item ${v!=='' ? 'contado':''}" id="it-${cssId(p.sku)}">
-      <div class="info"><div class="nombre">${p.nombre||p.sku}</div><div class="sku">${p.sku}</div></div>
-      <input inputmode="numeric" pattern="[0-9]*" value="${v}" placeholder="${S.bloqueado?'🔒':'—'}" ${S.bloqueado?'disabled':''}
-             oninput="setConteo('${p.sku.replace(/'/g,"\\'")}', this.value)">
-    </div>`;
+    html += itemHTML(p, v);
   }
   cont.innerHTML = html || '<div class="pantalla"><p>Sin resultados para ese filtro.</p></div>';
   refrescar();
@@ -146,6 +183,8 @@ window.setConteo = (sku, val) => {
   val = val.replace(/\D/g,'');
   if (val === '') delete S.conteos[sku]; else S.conteos[sku] = val;
   if (val !== '' && !S.latencias[sku]) S.latencias[sku] = Math.round((Date.now() - S.cargadoEn)/1000);
+  if (S.deOtro) delete S.deOtro[sku];
+  S.ultimoTecleo = Date.now();
   const el = document.getElementById('it-' + cssId(sku));
   if (el) el.classList.toggle('contado', val !== '');
   refrescar(); autosave();
@@ -155,6 +194,25 @@ function refrescar() {
   const n = contados(), t = S.productos.length;
   document.getElementById('prog').style.width = (t ? (n/t*100) : 0) + '%';
   document.getElementById('nPend').textContent = t - n;
+  if (!S.mitadAvisada && t > 20 && n >= t/2) {
+    S.mitadAvisada = true;
+    const e = document.getElementById('estado');
+    if (e) e.textContent = '🎉 ¡Vas por la mitad! Buen momento para una pausa corta.';
+  }
+}
+
+function aplicarMerge(serverConteos) {
+  if (!serverConteos) return;
+  S.deOtro = S.deOtro || {};
+  let cambio = false;
+  for (const [k, v] of Object.entries(serverConteos)) {
+    if (S.conteos[k] === undefined || S.conteos[k] === '') {
+      S.conteos[k] = v; S.deOtro[k] = true; cambio = true;
+      const el = document.getElementById('it-' + cssId(k));
+      if (el) { const inp = el.querySelector('input'); if (inp && !inp.matches(':focus')) inp.value = v; el.classList.add('contado','deOtro'); }
+    }
+  }
+  if (cambio) refrescar();
 }
 
 function autosave() {
@@ -165,9 +223,53 @@ function autosave() {
     document.getElementById('estado').textContent = r.ok
       ? '✔ Guardado ' + new Date().toLocaleTimeString('es-CO',{hour:'2-digit',minute:'2-digit'})
       : '⚠ Sin conexión — se reintenta solo';
-    if (!r.ok) autosave();
+    if (r.ok) aplicarMerge(r.conteos); else autosave();
   }, 2500);
 }
+
+async function pullCompanero() {
+  if (S.enviado || S.bloqueado) return;
+  if (Date.now() - S.ultimoTecleo < 15000) return;
+  const r = await rpc('conteo_borrador', { p_token: token, p_borrador: { conteos: {}, contadoPor: S.contadoPor } });
+  if (r.ok) aplicarMerge(r.conteos);
+}
+
+window.toggleHallazgo = () => {
+  const p = document.getElementById('hallPanel');
+  p.style.display = p.style.display === 'none' ? 'block' : 'none';
+  if (p.style.display === 'block') document.getElementById('hallBuscar').focus();
+};
+
+let hallTimer = null;
+function buscarHallazgo(q) {
+  clearTimeout(hallTimer);
+  hallTimer = setTimeout(async () => {
+    if ((q||'').trim().length < 3) { document.getElementById('hallRes').innerHTML = ''; return; }
+    const r = await rpc('conteo_hallazgo_buscar', { p_token: token, p_q: q.trim() });
+    const res = (r.ok && r.productos) ? r.productos : [];
+    document.getElementById('hallRes').innerHTML = res.length
+      ? res.map(p => `<div class="res" onclick="agregarHallazgo('${p.sku.replace(/'/g,"\\'")}', '${(p.nombre||'').replace(/'/g,"\\'").replace(/"/g,'')}')">
+            <b>${p.nombre||p.sku}</b><span>${p.sku} · ${p.categoria||''}</span></div>`).join('')
+      : '<div class="res"><span>Sin resultados. Si no aparece, avísale a Elvis por el grupo.</span></div>';
+  }, 300);
+}
+
+window.agregarHallazgo = (sku, nombre) => {
+  const cant = prompt(`¿Cuántas unidades físicas hay de:\n${nombre}?`);
+  if (cant === null) return;
+  const v = String(cant).replace(/\D/g,'');
+  if (v === '') return alert('Escribe un número.');
+  if (!S.productos.find(p => p.sku === sku)) {
+    S.productos.push({ sku, nombre: '➕ ' + nombre, categoria: '➕ HALLAZGOS (no estaban en la lista)' });
+  }
+  S.conteos[sku] = v;
+  S.latencias[sku] = Math.round((Date.now() - S.cargadoEn)/1000);
+  document.getElementById('hallPanel').style.display = 'none';
+  document.getElementById('hallBuscar').value = '';
+  document.getElementById('hallRes').innerHTML = '';
+  lista(); autosave();
+  alert('Anotado como hallazgo ✅ (queda al final, en la categoría HALLAZGOS).');
+};
 
 function vigilarApertura() {
   const iv = setInterval(() => {
@@ -200,26 +302,41 @@ async function enviar() {
   const r = await rpc('conteo_enviar', { p_token: token,
     p: { items, cargado_en: S.cargadoEn, contado_por: S.contadoPor.trim() } });
   if (!r.ok) { btn.disabled = false; btn.textContent = 'Enviar conteo'; return alert('Error: ' + (r.error||'reintenta')); }
-  const esVerif = r.modo === 'VERIFICACION';
-  document.getElementById('app').innerHTML = esVerif ? `
-    <div class="pantalla">
-      <div class="icono">🔁</div><h2>¡Recuento enviado!</h2>
-      <div class="kpis">
-        <div class="kpi"><b>${r.total}</b><span>verificados</span></div>
-        <div class="kpi"><b style="color:var(--verde)">${r.falsas}</b><span>eran error de conteo</span></div>
-        <div class="kpi"><b style="color:#dc2626">${r.confirmadas}</b><span>novedades reales</span></div>
-      </div>
-      <p>Las novedades falsas quedaron cerradas. Las reales pasan a resolución. ¡Gracias! 🙌</p>
-    </div>` : `
-    <div class="pantalla">
-      <div class="icono">✅</div><h2>¡Conteo enviado!</h2>
+  S.enviado = true;
+  const fin = {
+    VERIFICACION: `
+      <div class="pantalla"><div class="icono">🔁</div><h2>¡Recuento enviado!</h2>
+        <div class="kpis">
+          <div class="kpi"><b>${r.total}</b><span>verificados</span></div>
+          <div class="kpi"><b style="color:var(--verde)">${r.falsas}</b><span>eran error de conteo</span></div>
+          <div class="kpi"><b style="color:#dc2626">${r.confirmadas}</b><span>novedades reales</span></div>
+        </div>
+        <p>El bot cruza contra ventas y stock vivo y publica el resultado en el grupo. ¡Gracias! 🙌</p></div>`,
+    DESEMPATE: `
+      <div class="pantalla"><div class="icono">🧷</div><h2>¡Desempates enviados!</h2>
+        <div class="kpis">
+          <div class="kpi"><b>${r.total}</b><span>contados</span></div>
+          <div class="kpi"><b style="color:var(--verde)">${(r.firmes||0)+(r.falsas||0)}</b><span>resueltos</span></div>
+          <div class="kpi"><b style="color:#dc2626">${r.para_elvis||0}</b><span>los decide Elvis</span></div>
+        </div>
+        <p>Tu conteo quedó como el que decide. ¡Gracias, Luisa! 🙌</p></div>`,
+    AUDITORIA: `
+      <div class="pantalla"><div class="icono">🔎</div><h2>¡Auditoría enviada!</h2>
+        <div class="kpis">
+          <div class="kpi"><b>${r.total}</b><span>auditados</span></div>
+          <div class="kpi"><b style="color:var(--verde)">${r.cuadran||0}</b><span>cuadran con SIIGO</span></div>
+          <div class="kpi"><b style="color:#dc2626">${r.fallas||0}</b><span>no cuadran</span></div>
+        </div>
+        <p>${(r.fallas||0) > 0 ? 'Las que no cuadran quedaron marcadas para Elvis.' : 'Las correcciones de ayer quedaron confirmadas.'} ¡Gracias! 🙌</p></div>`,
+  };
+  document.getElementById('app').innerHTML = fin[r.modo] || `
+    <div class="pantalla"><div class="icono">✅</div><h2>¡Conteo enviado!</h2>
       <div class="kpis">
         <div class="kpi"><b>${r.total}</b><span>contados</span></div>
         <div class="kpi"><b style="color:var(--verde)">${r.coinciden}</b><span>coinciden</span></div>
-        <div class="kpi"><b style="color:#dc2626">${r.novedades}</b><span>novedades</span></div>
+        <div class="kpi"><b style="color:#dc2626">${r.novedades}</b><span>diferencias aparentes</span></div>
       </div>
-      <p>El bot publicará el detalle de las novedades en el grupo de traslados. ¡Gracias, ${S.bodega}! 🙌</p>
-    </div>`;
+      <p>El bot cruza contra las ventas del día, el stock en vivo y las otras bodegas antes de publicar nada. ¡Gracias, ${S.bodega}! 🙌</p></div>`;
 }
 
 cargar();
