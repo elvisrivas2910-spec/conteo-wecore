@@ -324,10 +324,8 @@ async function enviar() {
       <div class="pantalla"><div class="icono">🔎</div><h2>¡Auditoría enviada!</h2>
         <div class="kpis">
           <div class="kpi"><b>${r.total}</b><span>auditados</span></div>
-          <div class="kpi"><b style="color:var(--verde)">${r.cuadran||0}</b><span>cuadran con SIIGO</span></div>
-          <div class="kpi"><b style="color:#dc2626">${r.fallas||0}</b><span>no cuadran</span></div>
         </div>
-        <p>${(r.fallas||0) > 0 ? 'Las que no cuadran quedaron marcadas para Elvis.' : 'Las correcciones de ayer quedaron confirmadas.'} ¡Gracias! 🙌</p></div>`,
+        <p>Estoy comparando contra SIIGO en vivo — el resultado le llega a Elvis por WhatsApp en unos minutos. ¡Gracias! 🙌</p></div>`,
   };
   document.getElementById('app').innerHTML = fin[r.modo] || `
     <div class="pantalla"><div class="icono">✅</div><h2>¡Conteo enviado!</h2>
