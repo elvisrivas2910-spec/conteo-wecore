@@ -291,6 +291,12 @@ async function enviar() {
   if (!S.contadoPor.trim()) { document.getElementById('quien').focus(); return alert('Escribe quién está contando (arriba).'); }
   if (n === 0) return alert('No has contado ningún producto.');
   const faltan = t - n;
+  if (faltan > 0 && S.modo === 'COMPLETO') {
+    S.soloPend = true;
+    const chip = document.getElementById('chipPend'); if (chip) chip.classList.add('activo');
+    lista();
+    return alert(`Te faltan ${faltan} referencias por contar — te las dejo filtradas en pantalla.\n\nSi de alguna NO hay existencias, márcala con 0: así queda constancia de que la revisaste.`);
+  }
   if (!confirm(`Cuenta: ${S.contadoPor.trim()}\nVas a enviar ${n} productos` +
       (faltan ? `.\n⚠️ ${faltan} quedarán como NO CONTADOS.` : ' (todos).') + '\n\n¿Enviar?')) return;
   const btn = document.getElementById('btnEnviar');
