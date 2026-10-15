@@ -98,7 +98,8 @@ async function cargar() {
   if (d.borrador && d.borrador.contadoPor) S.contadoPor = d.borrador.contadoPor;
   render(d);
   if (S.bloqueado) vigilarApertura();
-  setInterval(pullCompanero, 20000);
+  S.ultimaActividad = Date.now();
+  iniciarPull();
 }
 
 function contados() { return Object.values(S.conteos).filter(v => v !== '' && v !== null).length; }
@@ -185,6 +186,7 @@ window.setConteo = (sku, val) => {
   if (val !== '' && !S.latencias[sku]) S.latencias[sku] = Math.round((Date.now() - S.cargadoEn)/1000);
   if (S.deOtro) delete S.deOtro[sku];
   S.ultimoTecleo = Date.now();
+  retomarPull();
   const el = document.getElementById('it-' + cssId(sku));
   if (el) el.classList.toggle('contado', val !== '');
   refrescar(); autosave();
@@ -226,6 +228,31 @@ function autosave() {
     if (r.ok) aplicarMerge(r.conteos); else autosave();
   }, 2500);
 }
+
+// Lo del compañero se trae cada 60 s, solo con la pestaña visible y mientras alguien esté contando:
+// tras 10 min sin teclear se pausa, y retoma al volver a escribir o a la pestaña (con una consulta
+// inmediata al volver). Antes eran 20 s sin parar: ~2.100 consultas/día (15-10-2026).
+const PULL_CADA = 60000, PULL_INACTIVO = 600000;
+function iniciarPull() {
+  if (S.pullIv) return;
+  S.pullIv = setInterval(() => {
+    if (document.hidden) return;
+    if (Date.now() - (S.ultimaActividad || 0) > PULL_INACTIVO) {
+      clearInterval(S.pullIv); S.pullIv = null; return;
+    }
+    pullCompanero();
+  }, PULL_CADA);
+}
+function retomarPull() {
+  S.ultimaActividad = Date.now();
+  if (S.productos.length) iniciarPull();
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden || !S.productos.length) return;
+  S.ultimaActividad = Date.now();
+  iniciarPull();
+  pullCompanero();
+});
 
 async function pullCompanero() {
   if (S.enviado || S.bloqueado) return;
